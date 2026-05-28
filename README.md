@@ -1,37 +1,37 @@
 # nostr-cf-recon
 
-PoC para medir qué porcentaje de relays Nostr públicos están detrás de un CDN
-(Cloudflare, CloudFront, Fastly) y, por tanto, ocultan su IP origen.
+PoC measuring what percentage of public Nostr relays sit behind a CDN
+(Cloudflare, CloudFront, Fastly) and therefore hide their origin IP.
 
-## Motivación
+## Motivation
 
-Nostr se presenta como una red descentralizada, pero la centralización real no
-se mide solo por número de relays — también por cuántos comparten infraestructura
-oculta. Si una fracción significativa de relays está tras Cloudflare, una
-incidencia en CF (corte, bloqueo regional, decisión de moderación) afecta a
-buena parte del ecosistema de golpe, aunque "técnicamente" haya cientos de
-relays distintos.
+Nostr markets itself as a decentralized network, but real centralization isn't
+just about how many relays exist — it's also about how many share hidden
+infrastructure. If a meaningful fraction of relays sits behind Cloudflare, a
+single CF event (outage, regional block, moderation decision) hits a large
+chunk of the ecosystem at once, even though there are "technically" hundreds
+of distinct relays.
 
-Este repo es el **paso 0** de una investigación más amplia: validar primero
-*cuántos* relays están tras un CDN antes de invertir en *descubrir* su IP
-origen real (fase 2: NIP-11 pubkey fingerprint, DNS history, Censys/Shodan,
-validación con `--resolve`).
+This repo is **step 0** of a broader investigation: first validate *how many*
+relays are behind a CDN before investing effort into *unmasking* their real
+origin IP (phase 2: NIP-11 pubkey fingerprint, DNS history, Censys/Shodan,
+validation via `--resolve`).
 
-## Inspiración
+## Inspiration
 
-Adaptación al ecosistema Nostr de técnicas de
-[**CF-Hero**](https://github.com/musana/CF-Hero) — herramienta en Go para
-recon anti-Cloudflare. En particular el patrón de check por rango CIDR
-(`internal/dns/dns.go:53-80`). CF-Hero busca la IP origen; aquí solo medimos
-la presencia del CDN como gate para decidir si la fase 2 vale la pena.
+Nostr-flavored adaptation of techniques from
+[**CF-Hero**](https://github.com/musana/CF-Hero) — a Go tool for anti-Cloudflare
+recon. In particular the CIDR-range check pattern (`internal/dns/dns.go:53-80`).
+CF-Hero hunts for the origin IP; here we only measure CDN presence as a gate
+to decide whether phase 2 is worth the effort.
 
-## Resultado del paso 0 (2026-05)
+## Step-0 result (2026-05)
 
-Sobre el export `nw-relays-all-20260503.xlsx` de
-[nostr.watch](https://nostr.watch), filtrado a `in_rstate=True` +
-`network=clearnet` (1079 hosts únicos, 1067 resueltos):
+Run against the `nw-relays-all-20260503.xlsx` export from
+[nostr.watch](https://nostr.watch), filtered to `in_rstate=True` +
+`network=clearnet` (1079 unique hosts, 1067 resolved):
 
-| Verdict | Count | % de resueltos |
+| Verdict | Count | % of resolved |
 | --- | ---: | ---: |
 | cloudflare | 301 | 28.2% |
 | cloudfront | 2 | 0.2% |
@@ -39,58 +39,58 @@ Sobre el export `nw-relays-all-20260503.xlsx` de
 | direct | 764 | 71.6% |
 | dns_error | 12 | — |
 
-**~28% de los relays activos están detrás de un CDN — y Cloudflare es prácticamente
-el único en uso.** Añadir CloudFront/Fastly no cambia la historia: el problema
-de centralización en Nostr es, casi por entero, un problema de Cloudflare.
+**~28% of active relays sit behind a CDN — and Cloudflare is virtually the
+only one in use.** Adding CloudFront/Fastly barely moves the needle:
+centralization in Nostr is, almost entirely, a Cloudflare story.
 
-## Cómo funciona
+## How it works
 
-1. Lee URLs/hostnames de un fichero (`wss://relay.x/`, `relay.x`, mezclados).
-2. Normaliza a hostname y deduplica.
-3. Resuelve A/AAAA con `socket.getaddrinfo` (`ThreadPoolExecutor`, 50 workers
-   por defecto, timeout 5s).
-4. Comprueba cada IP contra rangos publicados por cada CDN:
+1. Reads URLs/hostnames from a file (`wss://relay.x/`, `relay.x`, mixed).
+2. Normalizes to hostname and deduplicates.
+3. Resolves A/AAAA records with `socket.getaddrinfo`
+   (`ThreadPoolExecutor`, 50 workers by default, 5s timeout).
+4. Checks each IP against ranges published by each CDN:
    - Cloudflare: `https://www.cloudflare.com/ips-v4` + `ips-v6`
    - CloudFront: `https://ip-ranges.amazonaws.com/ip-ranges.json` (service=CLOUDFRONT)
    - Fastly: `https://api.fastly.com/public-ip-list`
-   - Las listas se cachean 7 días en `./.cdn_cache/`.
-5. Reporta resumen + (opcional) detalle por host y volcado JSON.
+   - Lists are cached for 7 days in `./.cdn_cache/`.
+5. Prints a summary and (optionally) per-host detail plus a JSON dump.
 
-`.onion` / `.i2p` se saltan (no resuelven por DNS).
+`.onion` / `.i2p` hosts are skipped (they don't resolve over DNS).
 
-## Uso
+## Usage
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install rich openpyxl
 
-# Si vienes de un export xlsx de nostr.watch:
+# Starting from a nostr.watch xlsx export:
 .venv/bin/python extract_relays.py nw-relays-all-YYYYMMDD.xlsx relays.txt --online --clearnet
 
-# Análisis:
-.venv/bin/python check_cf.py relays.txt                       # resumen
-.venv/bin/python check_cf.py relays.txt --detail              # un host por línea
-.venv/bin/python check_cf.py relays.txt --json out.json       # vuelca estructurado
+# Analysis:
+.venv/bin/python check_cf.py relays.txt                       # summary
+.venv/bin/python check_cf.py relays.txt --detail              # one host per line
+.venv/bin/python check_cf.py relays.txt --json out.json       # structured dump
 .venv/bin/python check_cf.py relays.txt --workers 100 --timeout 4
 ```
 
-## Ficheros
+## Files
 
-- `check_cf.py` — script principal.
-- `extract_relays.py` — helper para volcar el `url` de un xlsx de nostr.watch.
-- `relays.txt`, `relays-online.txt` — listas de input (full / filtrada).
-- `out.json`, `out-online.json` — resultados estructurados de las últimas corridas.
-- `.cdn_cache/` — rangos CIDR cacheados (regenerados cada 7 días).
+- `check_cf.py` — main script.
+- `extract_relays.py` — helper that dumps the `url` column of a nostr.watch xlsx.
+- `relays.txt`, `relays-online.txt` — input lists (full / filtered).
+- `out.json`, `out-online.json` — structured results from the latest runs.
+- `.cdn_cache/` — cached CIDR ranges (refreshed every 7 days).
 
-## Fuera de scope (de momento)
+## Out of scope (for now)
 
-- Descubrir IP origen real (fase 2).
-- CDNs sin lista pública (Akamai requiere ASN/CNAME heuristics).
+- Discovering the real origin IP (phase 2).
+- CDNs without a public IP list (Akamai requires ASN/CNAME heuristics).
 - Subdomain enumeration, NIP-11 fetching, DNS history.
-- Web UI, persistencia, fetcher automático de listas de relays.
+- Web UI, persistence, automated relay-list fetcher.
 
-## Filosofía
+## Philosophy
 
-Validar primero, arquitecturar después. Si el número del paso 0 es relevante
-(y lo es), la fase 2 se justifica. Si no, el proyecto se reorienta sin haber
-gastado esfuerzo en infraestructura prematura.
+Validate first, architect later. If the step-0 number is meaningful (and it
+is), phase 2 justifies itself. If it weren't, the project would pivot
+without having burned effort on premature infrastructure.
